@@ -195,14 +195,14 @@ def extract_features_numpy(board: chess.Board) -> np.ndarray:
         arr[i] = float(w_count - b_count)
         
     # 2. Piece-Square Tables (640 features: 10 piece types x 64 squares)
+    # Fast bitboard scan: iterate only over occupied squares (~20 iterations vs 640)
     idx = 5
     for color in (chess.WHITE, chess.BLACK):
         for pt in EVAL_PIECE_TYPES:
             mask = board.pieces_mask(pt, color)
-            for sq in range(64):
-                if mask & (1 << sq):
-                    arr[idx] = 1.0
-                idx += 1
+            for sq in chess.scan_forward(mask):
+                arr[idx + sq] = 1.0
+            idx += 64
                 
     # 3. Mobility Difference (1 feature)
     orig_turn = board.turn

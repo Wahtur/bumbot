@@ -41,12 +41,9 @@ VICTIM_SCORES = {
 
 def score_move(board: chess.Board, move: chess.Move) -> int:
     """
-    Heuristic move prioritization for Alpha-Beta move ordering:
-      - MVV-LVA for captures
-      - Promotion bonus
-      - Checks bonus
+    Fast move ordering heuristic based on MVV-LVA (Most Valuable Victim - Least Valuable Attacker)
+    and pawn promotions. Avoids expensive push/pop simulation on quiet moves.
     """
-    score = 0
     if board.is_capture(move):
         # Determine victim
         captured_piece = board.piece_at(move.to_square)
@@ -61,13 +58,10 @@ def score_move(board: chess.Board, move: chess.Move) -> int:
         attacker_val = VICTIM_SCORES.get(attacker_piece.piece_type, 0) if attacker_piece else 0
         
         # MVV-LVA score
-        score = 10000 + victim_val * 10 - attacker_val
+        return 10000 + victim_val * 10 - attacker_val
     elif move.promotion:
-        score = 9000
-    elif board.gives_check(move):
-        score = 1000
-        
-    return score
+        return 9000
+    return 0
 
 
 def order_moves(board: chess.Board) -> List[chess.Move]:
@@ -95,6 +89,73 @@ def evaluate_board(board: chess.Board, weights) -> float:
         return float(torch.dot(weights, features).item())
 
 
+def quiescence(
+    board: chess.Board,
+    weights,
+    alpha: float,
+    beta: float,
+    is_maximizing: bool,
+    max_qdepth: int = 4,
+    node_counter: Optional[List[int]] = None,
+) -> float:
+    """
+    Quiescence search: resolves the horizon effect by continuing to search
+    tactical capture sequences at leaf nodes until the board is quiet.
+    """
+    if node_counter is not None:
+        node_counter[0] += 1
+
+    stand_pat = evaluate_board(board, weights)
+
+    if is_maximizing:
+        if stand_pat >= beta:
+            return beta
+        alpha = max(alpha, stand_pat)
+
+        if max_qdepth <= 0:
+            return alpha
+
+        capture_moves = [m for m in board.legal_moves if board.is_capture(m)]
+        if not capture_moves:
+            return alpha
+        capture_moves.sort(key=lambda m: score_move(board, m), reverse=True)
+
+        for move in capture_moves:
+            board.push(move)
+            score = quiescence(board, weights, alpha, beta, False, max_qdepth - 1, node_counter)
+            board.pop()
+
+            if score >= beta:
+                return beta
+            alpha = max(alpha, score)
+
+        return alpha
+
+    else:
+        if stand_pat <= alpha:
+            return alpha
+        beta = min(beta, stand_pat)
+
+        if max_qdepth <= 0:
+            return beta
+
+        capture_moves = [m for m in board.legal_moves if board.is_capture(m)]
+        if not capture_moves:
+            return beta
+        capture_moves.sort(key=lambda m: score_move(board, m), reverse=True)
+
+        for move in capture_moves:
+            board.push(move)
+            score = quiescence(board, weights, alpha, beta, True, max_qdepth - 1, node_counter)
+            board.pop()
+
+            if score <= alpha:
+                return alpha
+            beta = min(beta, score)
+
+        return beta
+
+
 def alpha_beta(
     board: chess.Board,
     weights: torch.Tensor,
@@ -105,7 +166,7 @@ def alpha_beta(
     node_counter: Optional[List[int]] = None,
 ) -> Tuple[float, Optional[chess.Move], chess.Board]:
     """
-    Recursive Alpha-Beta minimax search.
+    Recursive Alpha-Beta minimax search with Quiescence search at leaf nodes.
 
     Returns:
         (best_eval, best_move, leaf_board_state)
@@ -128,9 +189,9 @@ def alpha_beta(
     ):
         return DRAW_SCORE, None, board.copy()
 
-    # Leaf depth reached: evaluate static board state
+    # Leaf depth reached: run quiescence search to avoid horizon effect
     if depth <= 0:
-        val = evaluate_board(board, weights)
+        val = quiescence(board, weights, alpha, beta, is_maximizing, max_qdepth=3, node_counter=node_counter)
         return val, None, board.copy()
 
     ordered_moves = order_moves(board)
@@ -209,3 +270,83 @@ def get_best_move(
         node_counter=counter,
     )
     return best_move, eval_score, leaf_board, counter[0]
+
+
+def get_best_move_sampled(
+    board: chess.Board,
+    weights,
+    depth: int = 2,
+    temperature: float = 0.0,
+) -> Tuple[Optional[chess.Move], float, chess.Board, int]:
+    """
+    AlphaZero-style root move selection with Softmax Temperature sampling.
+    
+    If temperature <= 0.01:
+        Runs standard deterministic alpha-beta minimax search (greedy argmax).
+    If temperature > 0.01:
+        Evaluates candidate legal moves to (depth - 1) and samples from
+        the softmax probability distribution:
+            P(a_i) = exp( (Q(s, a_i) - max Q) / T ) / sum_j exp( (Q(s, a_j) - max Q) / T )
+        
+        This prevents echoing identical opening sequences while ensuring
+        tactical blunders have near-zero probability.
+    """
+    if temperature <= 0.01:
+        return get_best_move(board, weights, depth=depth)
+
+    ordered_moves = order_moves(board)
+    if not ordered_moves:
+        return None, 0.0, board, 1
+
+    if len(ordered_moves) == 1:
+        move = ordered_moves[0]
+        board.push(move)
+        leaf = board.copy()
+        board.pop()
+        val = evaluate_board(board, weights)
+        return move, val, leaf, 1
+
+    is_maximizing = (board.turn == chess.WHITE)
+    counter = [0]
+    move_scores = []
+    leaves = []
+
+    # Evaluate each root move to depth - 1
+    sub_depth = max(0, depth - 1)
+    for move in ordered_moves:
+        board.push(move)
+        eval_score, _, leaf = alpha_beta(
+            board=board,
+            weights=weights,
+            depth=sub_depth,
+            alpha=-float("inf"),
+            beta=float("inf"),
+            is_maximizing=not is_maximizing,
+            node_counter=counter,
+        )
+        board.pop()
+
+        # Score oriented from moving player's perspective
+        q_score = eval_score if is_maximizing else -eval_score
+        move_scores.append(q_score)
+        leaves.append(leaf)
+
+    scores_arr = np.array(move_scores, dtype=np.float64)
+    max_q = float(np.max(scores_arr))
+    scaled = (scores_arr - max_q) / max(0.01, float(temperature))
+    scaled = np.clip(scaled, -50.0, 50.0)
+    exp_scores = np.exp(scaled)
+    sum_exp = float(np.sum(exp_scores))
+
+    if sum_exp <= 0 or np.isnan(sum_exp):
+        probs = np.ones(len(ordered_moves)) / len(ordered_moves)
+    else:
+        probs = exp_scores / sum_exp
+
+    chosen_idx = int(np.random.choice(len(ordered_moves), p=probs))
+    chosen_move = ordered_moves[chosen_idx]
+    chosen_score = move_scores[chosen_idx] if is_maximizing else -move_scores[chosen_idx]
+    chosen_leaf = leaves[chosen_idx]
+
+    return chosen_move, chosen_score, chosen_leaf, counter[0]
+

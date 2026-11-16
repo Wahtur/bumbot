@@ -1,0 +1,1119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bumbot TD-Leaf Chess Visualizer</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- jQuery (required by chessboard.js) -->
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <!-- Chessboard.js -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chessboard-js/1.0.0/chessboard-1.0.0.min.js"></script>
+    <!-- Chess.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        .board-container {
+            width: 480px;
+            max-width: 100%;
+        }
+        .eval-bar-outer {
+            width: 20px;
+            height: 480px;
+            background: #18181b;
+            border-radius: 4px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            position: relative;
+        }
+        .eval-bar-inner {
+            width: 100%;
+            background: #f4f4f5;
+            transition: height 0.25s ease-out;
+        }
+        .move-history-table {
+            max-height: 280px;
+            overflow-y: auto;
+        }
+        .move-cell:hover {
+            background-color: #3f3f46;
+            cursor: pointer;
+        }
+        .move-active {
+            background-color: #2563eb !important;
+            color: #ffffff !important;
+            font-weight: bold;
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #3f3f46;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen font-sans antialiased">
+
+    <!-- Top Navigation Header -->
+    <header class="border-b border-zinc-800 bg-zinc-900/80 backdrop-blur sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/20">
+                <i class="fa-solid fa-chess-knight text-xl text-white"></i>
+            </div>
+            <div>
+                <h1 class="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+                    Bumbot <span class="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 font-mono">TD-Leaf(&lambda;)</span>
+                </h1>
+                <p class="text-xs text-zinc-400">Classical Reinforcement Learning & Adversarial Search</p>
+            </div>
+        </div>
+
+        <!-- Live Daemon Telemetry Pill -->
+        <div class="flex items-center space-x-4">
+            <div id="daemon-badge" class="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-zinc-800 border border-zinc-700 text-xs">
+                <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" id="status-dot"></span>
+                <span id="daemon-status-text" class="text-zinc-300 font-medium">Connecting...</span>
+            </div>
+            <div class="hidden sm:flex items-center space-x-4 text-xs text-zinc-400 border-l border-zinc-800 pl-4">
+                <div>Games: <span id="stat-total-games" class="text-white font-mono font-bold">0</span></div>
+                <div>Loss: <span id="stat-latest-loss" class="text-blue-400 font-mono font-bold">0.000</span></div>
+                <div>||w||: <span id="stat-latest-norm" class="text-emerald-400 font-mono font-bold">0.000</span></div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Mode Switcher Tabs -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 pt-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div class="inline-flex p-1 rounded-xl bg-zinc-900 border border-zinc-800 shadow-lg">
+            <button id="tab-mode-arena" onclick="setAppMode('arena')" class="px-5 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition bg-blue-600 text-white shadow-md">
+                <i class="fa-solid fa-trophy"></i> Arena Spectator (Bot vs Bot)
+            </button>
+            <button id="tab-mode-play" onclick="setAppMode('play')" class="px-5 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition text-zinc-400 hover:text-white">
+                <i class="fa-solid fa-gamepad"></i> Play Against Bot
+            </button>
+        </div>
+        <div id="play-mode-hint" class="hidden text-xs text-zinc-400 sm:flex items-center gap-2 bg-zinc-900/80 px-3.5 py-1.5 rounded-full border border-zinc-800">
+            <span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span>Interactive Mode: Drag & drop pieces to play directly against the trained model</span>
+        </div>
+    </div>
+
+    <!-- Main Workspace Container -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+        <!-- Left Column: Interactive Chessboard & Controls (7 cols) -->
+        <section class="lg:col-span-7 flex flex-col items-center">
+            
+            <!-- Game Match Info Banner -->
+            <div id="match-banner" class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-4 mb-4 flex items-center justify-between">
+                <div>
+                    <div id="banner-mode-label" class="text-xs text-zinc-400 uppercase font-semibold tracking-wider">Match Up</div>
+                    <div class="text-base font-bold text-white flex items-center gap-2 mt-0.5">
+                        <span id="banner-white" class="text-zinc-200">White</span>
+                        <span class="text-xs text-zinc-500 font-normal">vs</span>
+                        <span id="banner-black" class="text-zinc-400">Black</span>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <span id="banner-result" class="text-sm px-2.5 py-1 rounded-md font-bold font-mono bg-zinc-800 border border-zinc-700 text-zinc-300">Ready</span>
+                    <div id="banner-reason" class="text-xs text-zinc-400 mt-1">Select generations to play</div>
+                </div>
+            </div>
+
+            <!-- Board & Eval Bar Container -->
+            <div class="flex items-center space-x-4 mb-4">
+                <!-- Vertical Eval Bar -->
+                <div class="eval-bar-outer shadow-inner border border-zinc-700/50">
+                    <div class="absolute inset-x-0 top-1/2 -translate-y-1/2 h-[1px] bg-zinc-600/50 z-10 pointer-events-none"></div>
+                    <div id="eval-bar-white" class="eval-bar-inner" style="height: 50%;"></div>
+                </div>
+
+                <!-- Chessboard.js Element -->
+                <div class="board-container shadow-2xl rounded-lg overflow-hidden border border-zinc-800">
+                    <div id="board" style="width: 100%;"></div>
+                </div>
+            </div>
+
+            <!-- Controls (Arena Mode) -->
+            <div id="arena-controls-container" class="w-full max-w-[480px] bg-zinc-900 border border-zinc-800 rounded-xl p-3 flex flex-col gap-3 shadow-lg">
+                <!-- Move Buttons -->
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-1">
+                        <button id="btn-first" class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs transition active:scale-95" title="First Move">
+                            <i class="fa-solid fa-backward-step"></i>
+                        </button>
+                        <button id="btn-prev" class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs transition active:scale-95" title="Previous Move">
+                            <i class="fa-solid fa-chevron-left"></i>
+                        </button>
+                        <button id="btn-play" class="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs transition flex items-center gap-1.5 active:scale-95">
+                            <i id="play-icon" class="fa-solid fa-play"></i> <span id="play-text">Play</span>
+                        </button>
+                        <button id="btn-next" class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs transition active:scale-95" title="Next Move">
+                            <i class="fa-solid fa-chevron-right"></i>
+                        </button>
+                        <button id="btn-last" class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs transition active:scale-95" title="Last Move">
+                            <i class="fa-solid fa-forward-step"></i>
+                        </button>
+                    </div>
+
+                    <!-- Flip Board -->
+                    <button onclick="flipBoard()" class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs transition" title="Flip Board">
+                        <i class="fa-solid fa-arrows-rotate mr-1"></i> Flip
+                    </button>
+                </div>
+
+                <!-- Speed Slider & Current Ply Info -->
+                <div class="flex items-center justify-between text-xs text-zinc-400 border-t border-zinc-800/80 pt-2">
+                    <div class="flex items-center space-x-2">
+                        <span>Speed:</span>
+                        <input type="range" id="speed-slider" min="200" max="2000" step="100" value="700" class="w-24 accent-blue-500 cursor-pointer">
+                        <span id="speed-label" class="font-mono text-zinc-300">0.7s</span>
+                    </div>
+                    <div>
+                        Ply: <span id="ply-indicator" class="text-white font-bold font-mono">0 / 0</span>
+                        <span id="eval-indicator" class="ml-2 font-mono text-blue-400">Eval: 0.00</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Controls (Play Against Bot Mode) -->
+            <div id="play-controls-container" class="hidden w-full max-w-[480px] bg-zinc-900 border border-zinc-800 rounded-xl p-3 flex flex-col gap-3 shadow-lg">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-2">
+                        <button onclick="startNewPlayGame()" class="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs transition flex items-center gap-1.5 active:scale-95 shadow-md shadow-emerald-600/20">
+                            <i class="fa-solid fa-rotate-right"></i> New Game
+                        </button>
+                        <button onclick="takeBackMove()" class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs transition flex items-center gap-1.5 active:scale-95" title="Take back move">
+                            <i class="fa-solid fa-arrow-rotate-left"></i> Take Back
+                        </button>
+                        <button onclick="resignGame()" class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-red-950/40 hover:text-red-300 text-zinc-400 text-xs transition flex items-center gap-1.5 active:scale-95" title="Resign game">
+                            <i class="fa-regular fa-flag"></i> Resign
+                        </button>
+                    </div>
+
+                    <!-- Flip Board -->
+                    <button onclick="flipBoard()" class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs transition" title="Flip Board">
+                        <i class="fa-solid fa-arrows-rotate mr-1"></i> Flip
+                    </button>
+                </div>
+
+                <!-- Turn & Eval Status Pill -->
+                <div class="flex items-center justify-between text-xs border-t border-zinc-800/80 pt-2.5">
+                    <div id="play-status-pill" class="flex items-center font-medium text-zinc-200">
+                        <span class="w-2.5 h-2.5 rounded-full bg-white inline-block mr-2"></span> Your Turn (White)
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <span id="play-move-count" class="text-zinc-500 font-mono">Ply: 0</span>
+                        <span id="play-eval-indicator" class="font-mono text-blue-400 font-bold">Eval: +0.00</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Move History List -->
+            <div class="w-full max-w-[480px] bg-zinc-900 border border-zinc-800 rounded-xl p-3 mt-4">
+                <div class="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 flex justify-between">
+                    <span>Move History</span>
+                    <span id="history-count" class="text-zinc-500 font-mono">0 moves</span>
+                </div>
+                <div id="move-history-container" class="move-history-table grid grid-cols-2 gap-1 text-xs font-mono text-zinc-300 p-1">
+                    <div class="col-span-2 text-zinc-500 text-center py-4 italic">No game simulated yet. Select generations and click Simulate Match.</div>
+                </div>
+            </div>
+
+        </section>
+
+
+        <!-- Right Column: Arena Matchmaker / Play Settings & Telemetry (5 cols) -->
+        <section class="lg:col-span-5 flex flex-col space-y-6">
+
+            <!-- Arena Matchmaker Card -->
+            <div id="arena-sidebar" class="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-xl">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-base font-bold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-gamepad text-blue-400"></i> Generation Matchmaker
+                    </h2>
+                    <span class="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">Arena</span>
+                </div>
+
+                <div class="space-y-4">
+                    <!-- White Player Generation -->
+                    <div>
+                        <label class="block text-xs font-medium text-zinc-300 mb-1.5 flex items-center gap-1.5">
+                            <span class="w-2.5 h-2.5 rounded-full bg-white inline-block"></span> White Player (Generation)
+                        </label>
+                        <select id="select-white" class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
+                            <option value="latest">Latest Active Generation</option>
+                            <option value="heuristic">Generation 0 (Heuristic Baseline)</option>
+                        </select>
+                    </div>
+
+                    <!-- Black Player Generation -->
+                    <div>
+                        <label class="block text-xs font-medium text-zinc-300 mb-1.5 flex items-center gap-1.5">
+                            <span class="w-2.5 h-2.5 rounded-full bg-zinc-700 border border-zinc-500 inline-block"></span> Black Player (Generation / Baseline)
+                        </label>
+                        <select id="select-black" class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
+                            <option value="heuristic">Generation 0 (Heuristic Baseline)</option>
+                            <option value="latest">Latest Active Generation</option>
+                            <option value="random">RandomBot (Baseline)</option>
+                            <option value="greedy">GreedyBot (1-ply)</option>
+                        </select>
+                    </div>
+
+                    <!-- Minimax Search Depth Slider -->
+                    <div>
+                        <div class="flex justify-between text-xs text-zinc-300 mb-1.5">
+                            <span>Search Depth (Alpha-Beta):</span>
+                            <span id="depth-val" class="font-bold text-blue-400 font-mono">Depth 2</span>
+                        </div>
+                        <input type="range" id="depth-slider" min="1" max="3" value="2" class="w-full accent-blue-500 cursor-pointer">
+                        <div class="flex justify-between text-[10px] text-zinc-500 mt-1 font-mono">
+                            <span>Depth 1 (Fastest)</span>
+                            <span>Depth 2 (Balanced)</span>
+                            <span>Depth 3 (Tactical)</span>
+                        </div>
+                    </div>
+
+                    <!-- Simulate Match Button -->
+                    <button id="btn-simulate" class="w-full py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold text-sm shadow-lg shadow-blue-500/20 transition active:scale-[0.98] flex items-center justify-center gap-2">
+                        <i id="sim-icon" class="fa-solid fa-play"></i>
+                        <span id="sim-text">Simulate & Watch Match</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Play Against Bot Settings Card -->
+            <div id="play-sidebar" class="hidden bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-xl space-y-4">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-base font-bold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-chess-knight text-emerald-400"></i> Challenge Bumbot
+                    </h2>
+                    <span class="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">Human vs Bot</span>
+                </div>
+
+                <!-- Pick Your Side -->
+                <div>
+                    <label class="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-2">Choose Your Color</label>
+                    <div class="grid grid-cols-2 gap-3">
+                        <label class="flex items-center justify-center gap-2 p-2.5 rounded-xl border border-zinc-700 bg-zinc-800/80 hover:bg-zinc-800 cursor-pointer transition has-[:checked]:border-blue-500 has-[:checked]:bg-blue-600/10 has-[:checked]:text-white">
+                            <input type="radio" name="play-color" value="white" checked class="hidden" onchange="onColorChange()">
+                            <span class="w-3.5 h-3.5 rounded-full bg-white shadow"></span>
+                            <span class="text-xs font-semibold">Play as White</span>
+                        </label>
+                        <label class="flex items-center justify-center gap-2 p-2.5 rounded-xl border border-zinc-700 bg-zinc-800/80 hover:bg-zinc-800 cursor-pointer transition has-[:checked]:border-blue-500 has-[:checked]:bg-blue-600/10 has-[:checked]:text-white">
+                            <input type="radio" name="play-color" value="black" class="hidden" onchange="onColorChange()">
+                            <span class="w-3.5 h-3.5 rounded-full bg-zinc-900 border border-zinc-500"></span>
+                            <span class="text-xs font-semibold">Play as Black</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Pick Bot Opponent -->
+                <div>
+                    <label class="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+                        <span>Select Bot Opponent</span>
+                        <span class="text-[11px] text-zinc-500">Checkpoints</span>
+                    </label>
+                    <select id="select-play-bot" class="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
+                        <option value="latest">🔥 Latest Active Generation</option>
+                        <option value="heuristic">Generation 0 (Heuristic Baseline)</option>
+                    </select>
+                </div>
+
+                <!-- Bot Difficulty / Search Depth -->
+                <div>
+                    <div class="flex items-center justify-between mb-1.5">
+                        <label class="text-xs font-semibold text-zinc-300 uppercase tracking-wider">Search Depth</label>
+                        <span id="play-depth-val" class="text-xs font-bold font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">Depth 2 (~0.1s)</span>
+                    </div>
+                    <input type="range" id="play-depth-slider" min="1" max="4" value="2" class="w-full accent-emerald-500 cursor-pointer">
+                    <div class="flex justify-between text-[10px] text-zinc-500 mt-1 font-mono">
+                        <span>D1 (Instant)</span>
+                        <span>D2 (Fast ~0.1s)</span>
+                        <span>D3 (Tactical ~0.5s)</span>
+                        <span>D4 (Deep)</span>
+                    </div>
+                </div>
+
+                <!-- Action Button -->
+                <button onclick="startNewPlayGame()" class="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold text-sm shadow-lg shadow-emerald-500/20 transition active:scale-[0.98] flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-chess-board"></i>
+                    <span>Start New Match</span>
+                </button>
+
+                <!-- Engine Info Callout -->
+                <div class="rounded-xl bg-zinc-800/40 border border-zinc-700/50 p-3 text-xs text-zinc-400 space-y-1">
+                    <div class="text-zinc-200 font-medium flex items-center gap-1.5">
+                        <i class="fa-solid fa-microchip text-blue-400"></i> Engine Architecture
+                    </div>
+                    <p class="text-[11px] leading-relaxed text-zinc-400">
+                        The bot evaluates legal moves using <strong>Minimax with Alpha-Beta pruning</strong>, <strong>Quiescence Search</strong>, and <strong>651 learned weights</strong>.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Training Telemetry Cards -->
+            <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-xl">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-base font-bold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-chart-line text-emerald-400"></i> Homeserver Telemetry
+                    </h2>
+                    <button id="btn-refresh-stats" class="text-xs text-zinc-400 hover:text-white transition" title="Refresh Telemetry">
+                        <i class="fa-solid fa-arrows-rotate"></i>
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+                    <div class="bg-zinc-800/60 border border-zinc-700/60 rounded-xl p-3">
+                        <div class="text-[11px] text-zinc-400 font-medium">Total Games</div>
+                        <div id="card-games" class="text-xl font-bold font-mono text-white mt-0.5">0</div>
+                    </div>
+                    <div class="bg-zinc-800/60 border border-zinc-700/60 rounded-xl p-3">
+                        <div class="text-[11px] text-zinc-400 font-medium flex items-center justify-between">
+                            <span>Throughput</span>
+                            <span class="text-[10px] text-amber-400 font-mono"><i class="fa-solid fa-bolt"></i> Live</span>
+                        </div>
+                        <div class="flex items-baseline gap-1 mt-0.5">
+                            <span id="card-gps" class="text-xl font-bold font-mono text-amber-400">0.00</span>
+                            <span class="text-[10px] text-zinc-400">games/s</span>
+                        </div>
+                        <div id="card-gpm" class="text-[10px] text-zinc-500 font-mono mt-0.5">0.0 games/min</div>
+                    </div>
+                    <div class="bg-zinc-800/60 border border-zinc-700/60 rounded-xl p-3">
+                        <div class="text-[11px] text-zinc-400 font-medium">Search Velocity</div>
+                        <div class="flex items-baseline gap-1 mt-0.5">
+                            <span id="card-pps" class="text-xl font-bold font-mono text-indigo-400">0</span>
+                            <span class="text-[10px] text-zinc-400">plies/s</span>
+                        </div>
+                        <div class="text-[10px] text-zinc-500 font-mono mt-0.5">8-core parallel</div>
+                    </div>
+                    <div class="bg-zinc-800/60 border border-zinc-700/60 rounded-xl p-3">
+                        <div class="text-[11px] text-zinc-400 font-medium">TD-Leaf Loss</div>
+                        <div id="card-loss" class="text-xl font-bold font-mono text-blue-400 mt-0.5">0.000</div>
+                    </div>
+                    <div class="bg-zinc-800/60 border border-zinc-700/60 rounded-xl p-3">
+                        <div class="text-[11px] text-zinc-400 font-medium">Weight Norm (||w||)</div>
+                        <div id="card-norm" class="text-xl font-bold font-mono text-emerald-400 mt-0.5">0.000</div>
+                    </div>
+                    <div class="bg-zinc-800/60 border border-zinc-700/60 rounded-xl p-3">
+                        <div class="text-[11px] text-zinc-400 font-medium">Latest Matchup</div>
+                        <div id="card-outcome" class="text-xs font-bold font-mono text-zinc-300 mt-2 truncate" title="Latest outcome">N/A</div>
+                    </div>
+                </div>
+
+                <!-- Training Charts Tabs / Image -->
+                <div class="border-t border-zinc-800 pt-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex space-x-2">
+                            <button id="tab-curves" onclick="switchChartTab('curves')" class="text-xs px-2.5 py-1 rounded-md bg-blue-600 text-white font-medium transition">Convergence</button>
+                            <button id="tab-weights" onclick="switchChartTab('weights')" class="text-xs px-2.5 py-1 rounded-md bg-zinc-800 text-zinc-400 hover:text-white transition">Learned Weights</button>
+                        </div>
+                        <div class="flex items-center space-x-3">
+                            <button onclick="refreshPlotImage()" class="text-xs text-zinc-400 hover:text-white transition flex items-center gap-1" title="Refresh Live Plot">
+                                <i id="chart-refresh-icon" class="fa-solid fa-arrows-rotate"></i> Refresh
+                            </button>
+                            <a id="chart-expand-link" href="/api/plots/training_curves.png" target="_blank" class="text-xs text-blue-400 hover:underline flex items-center gap-1">
+                                Expand <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+                            </a>
+                        </div>
+                    </div>
+                    <div class="rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950 flex items-center justify-center min-h-[160px]">
+                        <img id="img-curves" src="/api/plots/training_curves.png" alt="Training Curves" class="w-full object-cover">
+                    </div>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- Application Script -->
+    <script>
+        let board = null;
+        let currentAppMode = 'arena'; // 'arena' or 'play'
+
+        // Arena state
+        let gameData = {
+            fens: ['rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'],
+            moves_san: [],
+            evals: [0.0],
+            currentIndex: 0
+        };
+        let autoPlayTimer = null;
+        let isPlaying = false;
+
+        // Interactive Play state
+        let playGame = new Chess();
+        let playMoves = [];
+        let humanColor = 'white';
+        let isBotThinking = false;
+
+        // Initialize Chessboard.js
+        function initBoard() {
+            const config = {
+                draggable: true,
+                position: 'start',
+                onDragStart: onDragStart,
+                onDrop: onDrop,
+                onSnapEnd: onSnapEnd,
+                pieceTheme: 'https://chessboardjs.com/img/chesspieces/wikipedia/{piece}.png'
+            };
+            board = ChessBoard('board', config);
+            $(window).resize(board.resize);
+        }
+
+        // Switch between Arena Spectator Mode and Play Against Bot Mode
+        function setAppMode(mode) {
+            currentAppMode = mode;
+            if (mode === 'arena') {
+                $('#tab-mode-arena').removeClass('text-zinc-400 hover:text-white').addClass('bg-blue-600 text-white shadow-md');
+                $('#tab-mode-play').removeClass('bg-blue-600 text-white shadow-md').addClass('text-zinc-400 hover:text-white');
+                
+                $('#arena-controls-container').removeClass('hidden');
+                $('#play-controls-container').addClass('hidden');
+                $('#play-mode-hint').addClass('hidden');
+                
+                $('#arena-sidebar').removeClass('hidden');
+                $('#play-sidebar').addClass('hidden');
+
+                $('#banner-mode-label').text('Arena Match Up');
+                board.orientation('white');
+                updateEvalBarOrientation();
+                goToPly(gameData.currentIndex);
+                renderMoveHistory();
+            } else {
+                $('#tab-mode-play').removeClass('text-zinc-400 hover:text-white').addClass('bg-blue-600 text-white shadow-md');
+                $('#tab-mode-arena').removeClass('bg-blue-600 text-white shadow-md').addClass('text-zinc-400 hover:text-white');
+
+                $('#play-controls-container').removeClass('hidden');
+                $('#arena-controls-container').addClass('hidden');
+                $('#play-mode-hint').removeClass('hidden');
+
+                $('#play-sidebar').removeClass('hidden');
+                $('#arena-sidebar').addClass('hidden');
+
+                $('#banner-mode-label').text('Human vs Bot Challenge');
+                stopAutoPlay();
+                
+                if (playMoves.length === 0) {
+                    startNewPlayGame();
+                } else {
+                    board.orientation(humanColor);
+                    updateEvalBarOrientation();
+                    board.position(playGame.fen());
+                    renderPlayMoveHistory();
+                }
+            }
+        }
+
+        // Chessboard Drag & Drop Callbacks
+        function onDragStart(source, piece, position, orientation) {
+            if (currentAppMode !== 'play') return false;
+            if (playGame.game_over()) return false;
+            if (isBotThinking) return false;
+
+            // Only allow dragging pieces matching the human player's turn
+            if (humanColor === 'white') {
+                if (piece.search(/^b/) !== -1) return false;
+                if (playGame.turn() !== 'w') return false;
+            } else {
+                if (piece.search(/^w/) !== -1) return false;
+                if (playGame.turn() !== 'b') return false;
+            }
+
+            return true;
+        }
+
+        function onDrop(source, target) {
+            if (currentAppMode !== 'play') return;
+
+            const move = playGame.move({
+                from: source,
+                to: target,
+                promotion: 'q'
+            });
+
+            if (move === null) return 'snapback';
+
+            handleHumanMove(move);
+        }
+
+        function onSnapEnd() {
+            if (currentAppMode === 'play') {
+                board.position(playGame.fen());
+            }
+        }
+
+        function handleHumanMove(move) {
+            playMoves.push({ san: move.san, color: humanColor });
+            renderPlayMoveHistory();
+            $('#play-move-count').text(`Ply: ${playMoves.length}`);
+
+            if (playGame.game_over()) {
+                checkPlayGameOver();
+                return;
+            }
+
+            // Bot's turn to respond
+            isBotThinking = true;
+            $('#play-status-pill').html('<i class="fa-solid fa-spinner fa-spin text-blue-400 mr-2"></i> Bot is calculating move...');
+
+            const botId = $('#select-play-bot').val();
+            const depth = parseInt($('#play-depth-slider').val());
+
+            $.ajax({
+                url: '/api/bot_move',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    fen: playGame.fen(),
+                    bot_id: botId,
+                    depth: depth
+                }),
+                success: function(res) {
+                    isBotThinking = false;
+                    if (res.bot_move_san) {
+                        playGame.move(res.bot_move_san);
+                        board.position(playGame.fen());
+                        const botColor = (humanColor === 'white' ? 'black' : 'white');
+                        playMoves.push({ san: res.bot_move_san, color: botColor });
+                        renderPlayMoveHistory();
+                        setEvalDisplay(res.eval);
+                        $('#play-move-count').text(`Ply: ${playMoves.length}`);
+                    }
+
+                    if (res.game_over || playGame.game_over()) {
+                        checkPlayGameOver(res.result, res.reason);
+                    } else {
+                        const checkStr = res.is_check ? ' <span class="text-amber-400 font-bold ml-1">(Check!)</span>' : '';
+                        const dotHtml = (humanColor === 'white')
+                            ? '<span class="w-2.5 h-2.5 rounded-full bg-white inline-block mr-2 shadow"></span>'
+                            : '<span class="w-2.5 h-2.5 rounded-full bg-zinc-900 border border-zinc-500 inline-block mr-2"></span>';
+                        $('#play-status-pill').html(`${dotHtml} Your Turn (${humanColor === 'white' ? 'White' : 'Black'})${checkStr}`);
+                    }
+                },
+                error: function(err) {
+                    isBotThinking = false;
+                    $('#play-status-pill').html('<span class="text-red-400"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Bot failed to respond</span>');
+                    console.error("Bot move error:", err);
+                }
+            });
+        }
+
+        // Start a fresh human vs bot game
+        function startNewPlayGame() {
+            playGame.reset();
+            playMoves = [];
+            isBotThinking = false;
+            humanColor = $('input[name="play-color"]:checked').val() || 'white';
+
+            const botLabel = $('#select-play-bot option:selected').text();
+            $('#banner-white').text(humanColor === 'white' ? 'You (Human)' : botLabel);
+            $('#banner-black').text(humanColor === 'black' ? 'You (Human)' : botLabel);
+            $('#banner-result').text('In Progress').removeClass('bg-emerald-900/60 text-emerald-300 bg-red-900/50 text-red-300').addClass('bg-zinc-800 text-zinc-300 border-zinc-700');
+            $('#banner-reason').text(`Playing against ${botLabel}`);
+            $('#play-move-count').text('Ply: 0');
+            setEvalDisplay(0.0);
+
+            if (humanColor === 'black') {
+                board.orientation('black');
+                updateEvalBarOrientation();
+                board.position('start');
+                renderPlayMoveHistory();
+
+                // Bot makes move 1 as White
+                isBotThinking = true;
+                $('#play-status-pill').html('<i class="fa-solid fa-spinner fa-spin text-blue-400 mr-2"></i> Bot is making opening move as White...');
+
+                const botId = $('#select-play-bot').val();
+                const depth = parseInt($('#play-depth-slider').val());
+
+                $.ajax({
+                    url: '/api/bot_move',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        fen: playGame.fen(),
+                        bot_id: botId,
+                        depth: depth
+                    }),
+                    success: function(res) {
+                        isBotThinking = false;
+                        if (res.bot_move_san) {
+                            playGame.move(res.bot_move_san);
+                            board.position(playGame.fen());
+                            playMoves.push({ san: res.bot_move_san, color: 'white' });
+                            renderPlayMoveHistory();
+                            setEvalDisplay(res.eval);
+                            $('#play-move-count').text(`Ply: ${playMoves.length}`);
+                        }
+                        $('#play-status-pill').html('<span class="w-2.5 h-2.5 rounded-full bg-zinc-900 border border-zinc-500 inline-block mr-2"></span> Your Turn (Black)');
+                    },
+                    error: function(err) {
+                        isBotThinking = false;
+                        $('#play-status-pill').html('<span class="text-red-400"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Bot opening error</span>');
+                    }
+                });
+
+            } else {
+                board.orientation('white');
+                updateEvalBarOrientation();
+                board.position('start');
+                renderPlayMoveHistory();
+                $('#play-status-pill').html('<span class="w-2.5 h-2.5 rounded-full bg-white inline-block mr-2 shadow"></span> Your Turn (White) - Make your first move');
+            }
+        }
+
+        // Take Back / Undo Move
+        function takeBackMove() {
+            if (currentAppMode !== 'play' || isBotThinking) return;
+            if (playMoves.length === 0) return;
+
+            if (humanColor === 'white') {
+                if (playGame.turn() === 'w') {
+                    playGame.undo(); // undo bot move
+                    playGame.undo(); // undo human move
+                    playMoves.pop();
+                    playMoves.pop();
+                } else {
+                    playGame.undo();
+                    playMoves.pop();
+                }
+            } else {
+                // Human is black
+                if (playGame.turn() === 'b') {
+                    playGame.undo(); // undo bot move
+                    playGame.undo(); // undo human move
+                    playMoves.pop();
+                    playMoves.pop();
+                } else {
+                    playGame.undo();
+                    playMoves.pop();
+                }
+            }
+
+            board.position(playGame.fen());
+            renderPlayMoveHistory();
+            $('#play-move-count').text(`Ply: ${playMoves.length}`);
+            const dotHtml = (humanColor === 'white')
+                ? '<span class="w-2.5 h-2.5 rounded-full bg-white inline-block mr-2 shadow"></span>'
+                : '<span class="w-2.5 h-2.5 rounded-full bg-zinc-900 border border-zinc-500 inline-block mr-2"></span>';
+            $('#play-status-pill').html(`${dotHtml} Move taken back. Your turn`);
+        }
+
+        // Resign
+        function resignGame() {
+            if (currentAppMode !== 'play' || isBotThinking) return;
+            if (playGame.game_over()) return;
+
+            if (confirm("Are you sure you want to resign?")) {
+                const resCode = (humanColor === 'white') ? '0-1' : '1-0';
+                $('#banner-result').text(resCode).removeClass('bg-zinc-800 text-zinc-300 bg-emerald-900/60 text-emerald-300').addClass('bg-red-900/50 text-red-300 border-red-700');
+                $('#banner-reason').text(`You resigned. Bot wins.`);
+                $('#play-status-pill').html('<span class="text-red-400 font-bold"><i class="fa-solid fa-flag mr-1.5"></i> You resigned</span>');
+            }
+        }
+
+        function onColorChange() {
+            startNewPlayGame();
+        }
+
+        function checkPlayGameOver(serverResult, serverReason) {
+            let result = serverResult;
+            let reason = serverReason;
+
+            if (!result) {
+                if (playGame.in_checkmate()) {
+                    result = (playGame.turn() === 'b') ? '1-0' : '0-1';
+                    reason = 'Checkmate';
+                } else if (playGame.in_stalemate()) {
+                    result = '1/2-1/2';
+                    reason = 'Stalemate';
+                } else if (playGame.in_threefold_repetition()) {
+                    result = '1/2-1/2';
+                    reason = 'Threefold Repetition';
+                } else if (playGame.insufficient_material()) {
+                    result = '1/2-1/2';
+                    reason = 'Insufficient Material';
+                } else if (playGame.in_draw()) {
+                    result = '1/2-1/2';
+                    reason = 'Draw';
+                }
+            }
+
+            if (result) {
+                let isHumanWinner = false;
+                if (result === '1-0' && humanColor === 'white') isHumanWinner = true;
+                if (result === '0-1' && humanColor === 'black') isHumanWinner = true;
+
+                $('#banner-result').text(result);
+                if (isHumanWinner) {
+                    $('#banner-result').removeClass('bg-zinc-800 text-zinc-300 bg-red-900/50 text-red-300').addClass('bg-emerald-900/60 text-emerald-300 border-emerald-700');
+                    $('#banner-reason').text(`Victory! You won by ${reason}!`);
+                    $('#play-status-pill').html('<span class="text-emerald-400 font-bold"><i class="fa-solid fa-trophy mr-1.5"></i> You Won!</span>');
+                } else if (result === '1/2-1/2') {
+                    $('#banner-result').removeClass('bg-emerald-900/60 text-emerald-300 bg-red-900/50 text-red-300').addClass('bg-zinc-800 text-zinc-300 border-zinc-700');
+                    $('#banner-reason').text(`Draw by ${reason}`);
+                    $('#play-status-pill').html('<span class="text-zinc-300 font-bold"><i class="fa-solid fa-handshake mr-1.5"></i> Game Drawn</span>');
+                } else {
+                    $('#banner-result').removeClass('bg-zinc-800 text-zinc-300 bg-emerald-900/60 text-emerald-300').addClass('bg-red-900/50 text-red-300 border-red-700');
+                    $('#banner-reason').text(`Defeat! Bot won by ${reason}`);
+                    $('#play-status-pill').html('<span class="text-red-400 font-bold"><i class="fa-solid fa-skull mr-1.5"></i> Bot Won</span>');
+                }
+            }
+        }
+
+        // Render board at a specific ply (Arena mode)
+        function goToPly(index) {
+            if (index < 0 || index >= gameData.fens.length) return;
+            gameData.currentIndex = index;
+            board.position(gameData.fens[index]);
+
+            // Update Ply & Eval Indicators
+            const total = gameData.moves_san.length;
+            $('#ply-indicator').text(`${index} / ${total}`);
+
+            const evalScore = gameData.evals[index] !== undefined ? gameData.evals[index] : 0.0;
+            setEvalDisplay(evalScore);
+
+            // Highlight active move in history
+            $('.move-cell').removeClass('move-active');
+            if (index > 0) {
+                $(`#move-cell-${index - 1}`).addClass('move-active');
+            }
+        }
+
+        // Set Eval Display & Bar Height
+        function setEvalDisplay(evalScore) {
+            if (evalScore === undefined || evalScore === null) evalScore = 0.0;
+            const evalSign = evalScore > 0 ? `+${evalScore.toFixed(2)}` : evalScore.toFixed(2);
+            $('#eval-indicator').text(`Eval: ${evalSign}`);
+            $('#play-eval-indicator').text(`Eval: ${evalSign}`);
+
+            const winProb = Math.tanh(evalScore / 4.0);
+            const whitePct = ((winProb + 1.0) / 2.0) * 100;
+            $('#eval-bar-white').css('height', `${whitePct.toFixed(1)}%`);
+        }
+
+        // Populate move history list (Arena mode)
+        function renderMoveHistory() {
+            const container = $('#move-history-container');
+            container.empty();
+
+            if (gameData.moves_san.length === 0) {
+                container.html('<div class="col-span-2 text-zinc-500 text-center py-4 italic">No game simulated yet. Select generations and click Simulate Match.</div>');
+                $('#history-count').text('0 moves');
+                return;
+            }
+
+            $('#history-count').text(`${gameData.moves_san.length} moves`);
+
+            for (let i = 0; i < gameData.moves_san.length; i += 2) {
+                const moveNum = Math.floor(i / 2) + 1;
+                const whiteMove = gameData.moves_san[i];
+                const blackMove = (i + 1 < gameData.moves_san.length) ? gameData.moves_san[i + 1] : '';
+
+                const rowHtml = `
+                    <div id="move-cell-${i}" onclick="goToPly(${i + 1})" class="move-cell px-2 py-1 rounded flex justify-between">
+                        <span class="text-zinc-500">${moveNum}.</span>
+                        <span class="text-white font-medium">${whiteMove}</span>
+                    </div>
+                    <div id="move-cell-${i + 1}" onclick="goToPly(${i + 2})" class="move-cell px-2 py-1 rounded flex justify-between ${blackMove ? '' : 'pointer-events-none'}">
+                        <span class="text-zinc-400 font-medium">${blackMove}</span>
+                    </div>
+                `;
+                container.append(rowHtml);
+            }
+        }
+
+        // Populate move history list (Play mode)
+        function renderPlayMoveHistory() {
+            const container = $('#move-history-container');
+            container.empty();
+
+            if (playMoves.length === 0) {
+                container.html('<div class="col-span-2 text-zinc-500 text-center py-4 italic">Game started. Make your first move on the board!</div>');
+                $('#history-count').text('0 moves');
+                return;
+            }
+
+            $('#history-count').text(`${playMoves.length} plies`);
+
+            for (let i = 0; i < playMoves.length; i += 2) {
+                const moveNum = Math.floor(i / 2) + 1;
+                const whiteMove = playMoves[i] ? playMoves[i].san : '';
+                const blackMove = (i + 1 < playMoves.length) ? playMoves[i + 1].san : '';
+
+                const rowHtml = `
+                    <div class="px-2 py-1 rounded flex justify-between bg-zinc-800/40">
+                        <span class="text-zinc-500">${moveNum}.</span>
+                        <span class="text-white font-medium">${whiteMove}</span>
+                    </div>
+                    <div class="px-2 py-1 rounded flex justify-between ${blackMove ? 'bg-zinc-800/40' : 'pointer-events-none'}">
+                        <span class="text-zinc-400 font-medium">${blackMove}</span>
+                    </div>
+                `;
+                container.append(rowHtml);
+            }
+            container.scrollTop(container[0].scrollHeight);
+        }
+
+        // Play/Pause Auto-playback
+        function togglePlay() {
+            if (isPlaying) {
+                stopAutoPlay();
+            } else {
+                startAutoPlay();
+            }
+        }
+
+        function startAutoPlay() {
+            if (gameData.currentIndex >= gameData.fens.length - 1) {
+                goToPly(0);
+            }
+            isPlaying = true;
+            $('#play-icon').removeClass('fa-play').addClass('fa-pause');
+            $('#play-text').text('Pause');
+
+            const speed = parseInt($('#speed-slider').val());
+            autoPlayTimer = setInterval(() => {
+                if (gameData.currentIndex < gameData.fens.length - 1) {
+                    goToPly(gameData.currentIndex + 1);
+                } else {
+                    stopAutoPlay();
+                }
+            }, speed);
+        }
+
+        function stopAutoPlay() {
+            isPlaying = false;
+            if (autoPlayTimer) clearInterval(autoPlayTimer);
+            $('#play-icon').removeClass('fa-pause').addClass('fa-play');
+            $('#play-text').text('Play');
+        }
+
+        // Flip Board helper
+        function flipBoard() {
+            board.flip();
+            updateEvalBarOrientation();
+        }
+
+        function updateEvalBarOrientation() {
+            const isBlack = (typeof board !== 'undefined' && typeof board.orientation === 'function')
+                ? (board.orientation() === 'black')
+                : false;
+            $('.eval-bar-outer').css('justify-content', isBlack ? 'flex-start' : 'flex-end');
+        }
+
+        // Fetch Live Telemetry & Available Checkpoints
+        function fetchStatus() {
+            $.getJSON('/api/status', function(data) {
+                // Daemon Running Badge
+                if (data.daemon_running) {
+                    $('#status-dot').removeClass('bg-amber-400 bg-red-500').addClass('bg-emerald-400');
+                    $('#daemon-status-text').text(`Training Active (PID: ${data.pid})`);
+                } else {
+                    $('#status-dot').removeClass('bg-emerald-400').addClass('bg-zinc-500');
+                    $('#daemon-status-text').text('Trainer Stopped');
+                }
+
+                // Stats
+                $('#stat-total-games').text(data.total_games);
+                $('#stat-latest-loss').text(data.latest_loss.toFixed(4));
+                $('#stat-latest-norm').text(data.latest_norm.toFixed(2));
+
+                $('#card-games').text(data.total_games.toLocaleString());
+                $('#card-gps').text(data.games_per_sec !== undefined ? data.games_per_sec.toFixed(2) : '0.00');
+                $('#card-gpm').text((data.games_per_min !== undefined ? data.games_per_min.toFixed(1) : '0.0') + ' games/min');
+                $('#card-pps').text(data.plies_per_sec !== undefined ? Math.round(data.plies_per_sec) : '0');
+                $('#card-loss').text(data.latest_loss.toFixed(5));
+                $('#card-norm').text(data.latest_norm.toFixed(3));
+                $('#card-outcome').text(data.latest_outcome);
+
+                // Populate Checkpoints Dropdowns if count changed
+                const currentWhiteVal = $('#select-white').val();
+                const currentBlackVal = $('#select-black').val();
+                const currentPlayBotVal = $('#select-play-bot').val();
+
+                const whiteSelect = $('#select-white');
+                const blackSelect = $('#select-black');
+                const playBotSelect = $('#select-play-bot');
+
+                // Refresh options if new checkpoints have been saved
+                if (data.generations.length > 0 && whiteSelect.children().length !== data.generations.length) {
+                    whiteSelect.empty();
+                    blackSelect.empty();
+                    playBotSelect.empty();
+
+                    data.generations.forEach(g => {
+                        whiteSelect.append(new Option(g.name, g.id));
+                        blackSelect.append(new Option(g.name, g.id));
+                        playBotSelect.append(new Option(g.name, g.id));
+                    });
+
+                    if (currentWhiteVal && whiteSelect.find(`option[value="${currentWhiteVal}"]`).length > 0) {
+                        whiteSelect.val(currentWhiteVal);
+                    } else {
+                        whiteSelect.val('latest');
+                    }
+
+                    if (currentBlackVal && blackSelect.find(`option[value="${currentBlackVal}"]`).length > 0) {
+                        blackSelect.val(currentBlackVal);
+                    } else {
+                        blackSelect.val('heuristic');
+                    }
+
+                    if (currentPlayBotVal && playBotSelect.find(`option[value="${currentPlayBotVal}"]`).length > 0) {
+                        playBotSelect.val(currentPlayBotVal);
+                    } else {
+                        playBotSelect.val('latest');
+                    }
+                }
+
+            });
+        }
+
+        let currentChartTab = 'curves';
+        function switchChartTab(tab) {
+            currentChartTab = tab;
+            if (tab === 'curves') {
+                $('#tab-curves').removeClass('bg-zinc-800 text-zinc-400').addClass('bg-blue-600 text-white font-medium');
+                $('#tab-weights').removeClass('bg-blue-600 text-white font-medium').addClass('bg-zinc-800 text-zinc-400');
+            } else {
+                $('#tab-weights').removeClass('bg-zinc-800 text-zinc-400').addClass('bg-blue-600 text-white font-medium');
+                $('#tab-curves').removeClass('bg-blue-600 text-white font-medium').addClass('bg-zinc-800 text-zinc-400');
+            }
+            refreshPlotImage();
+        }
+
+        function refreshPlotImage() {
+            const ts = Date.now();
+            $('#chart-refresh-icon').addClass('fa-spin');
+            const targetUrl = (currentChartTab === 'curves') ? 
+                `/api/plots/training_curves.png?t=${ts}` : 
+                `/api/plots/weight_interpretation.png?t=${ts}`;
+            
+            const tempImg = new Image();
+            tempImg.onload = function() {
+                $('#img-curves').attr('src', targetUrl);
+                $('#chart-expand-link').attr('href', targetUrl);
+                $('#chart-refresh-icon').removeClass('fa-spin');
+            };
+            tempImg.onerror = function() {
+                $('#chart-refresh-icon').removeClass('fa-spin');
+            };
+            tempImg.src = targetUrl;
+        }
+
+        // Auto-refresh plots every 10 seconds
+        setInterval(refreshPlotImage, 10000);
+
+        // Simulate Match (Arena Mode)
+        function simulateMatch() {
+            const whiteId = $('#select-white').val();
+            const blackId = $('#select-black').val();
+            const depth = parseInt($('#depth-slider').val());
+
+            $('#btn-simulate').prop('disabled', true).addClass('opacity-75');
+            $('#sim-icon').removeClass('fa-play').addClass('fa-spinner fa-spin');
+            $('#sim-text').text('Simulating game on server...');
+
+            stopAutoPlay();
+
+            $.ajax({
+                url: '/api/simulate_match',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    white_id: whiteId,
+                    black_id: blackId,
+                    depth: depth,
+                    max_plies: 120
+                }),
+                success: function(res) {
+                    gameData = {
+                        fens: res.fens,
+                        moves_san: res.moves_san,
+                        evals: res.evals,
+                        currentIndex: 0
+                    };
+
+                    // Update Banner
+                    $('#banner-white').text(res.white);
+                    $('#banner-black').text(res.black);
+                    $('#banner-result').text(res.result);
+                    $('#banner-reason').text(`${res.reason} (${res.total_plies} plies, ${res.time_sec}s)`);
+
+                    if (res.result === '1-0') {
+                        $('#banner-result').removeClass('bg-zinc-800 text-zinc-300 bg-red-900/50 text-red-300').addClass('bg-emerald-900/60 text-emerald-300 border-emerald-700');
+                    } else if (res.result === '0-1') {
+                        $('#banner-result').removeClass('bg-zinc-800 text-zinc-300 bg-emerald-900/60 text-emerald-300').addClass('bg-red-900/50 text-red-300 border-red-700');
+                    } else {
+                        $('#banner-result').removeClass('bg-emerald-900/60 text-emerald-300 bg-red-900/50 text-red-300').addClass('bg-zinc-800 text-zinc-300 border-zinc-700');
+                    }
+
+                    renderMoveHistory();
+                    goToPly(0);
+                    startAutoPlay();
+                },
+                error: function(err) {
+                    alert('Error simulating match: ' + (err.responseText || 'Server error'));
+                },
+                complete: function() {
+                    $('#btn-simulate').prop('disabled', false).removeClass('opacity-75');
+                    $('#sim-icon').removeClass('fa-spinner fa-spin').addClass('fa-play');
+                    $('#sim-text').text('Simulate & Watch Match');
+                }
+            });
+        }
+
+        // Document Ready Bindings
+        $(document).ready(function() {
+            initBoard();
+            fetchStatus();
+            setInterval(fetchStatus, 5000);
+
+            // Arena Replay Controls
+            $('#btn-first').click(() => { stopAutoPlay(); goToPly(0); });
+            $('#btn-last').click(() => { stopAutoPlay(); goToPly(gameData.fens.length - 1); });
+            $('#btn-prev').click(() => { stopAutoPlay(); goToPly(gameData.currentIndex - 1); });
+            $('#btn-next').click(() => { stopAutoPlay(); goToPly(gameData.currentIndex + 1); });
+            $('#btn-play').click(togglePlay);
+
+            $('#speed-slider').on('input', function() {
+                const val = $(this).val();
+                $('#speed-label').text((val / 1000).toFixed(1) + 's');
+                if (isPlaying) {
+                    stopAutoPlay();
+                    startAutoPlay();
+                }
+            });
+
+            $('#depth-slider').on('input', function() {
+                $('#depth-val').text(`Depth ${$(this).val()}`);
+            });
+
+            $('#play-depth-slider').on('input', function() {
+                const d = $(this).val();
+                let label = `Depth ${d}`;
+                if (d == 1) label += ' (Instant)';
+                else if (d == 2) label += ' (~0.1s)';
+                else if (d == 3) label += ' (~0.5s)';
+                else if (d == 4) label += ' (Deep)';
+                $('#play-depth-val').text(label);
+            });
+
+            $('#btn-simulate').click(simulateMatch);
+            $('#btn-refresh-stats').click(fetchStatus);
+        });
+    </script>
+</body>
+</html>
