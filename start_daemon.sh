@@ -11,7 +11,7 @@ LOG_DIR="$DIR/logs"
 TRAINER_LOG="$LOG_DIR/trainer.log"
 PYTHON="$DIR/venv/bin/python3"
 
-mkdir -p checkpoints "$LOG_DIR" plots
+mkdir -p checkpoints_v2 "$LOG_DIR" plots
 
 if [ -f "$PID_FILE" ]; then
     PID=$(cat "$PID_FILE")
@@ -24,13 +24,14 @@ if [ -f "$PID_FILE" ]; then
     fi
 fi
 
-WORKERS=${1:-10}
-DEPTH=${2:-2}
-CHECKPOINT_EVERY=${3:-50}
+WORKERS=${1:-8}
+DEPTH=${2:-3}
+CHECKPOINT_EVERY=${3:-40}
 
 echo "=========================================================="
-echo " Starting Continuous TD-Leaf Training Daemon"
+echo " Starting Continuous Bumbot V2 Training Daemon"
 echo " Workers: $WORKERS | Depth: $DEPTH | Checkpoints every: $CHECKPOINT_EVERY games"
+echo " Lineage: checkpoints_v2/ | Log: training_log_v2.csv"
 echo " Log file: $TRAINER_LOG"
 echo "=========================================================="
 
@@ -39,8 +40,8 @@ nohup "$PYTHON" -u td_leaf_trainer.py \
     --workers "$WORKERS" \
     --depth "$DEPTH" \
     --checkpoint-interval "$CHECKPOINT_EVERY" \
-    --save-dir checkpoints \
-    --log-file training_log.csv >> "$TRAINER_LOG" 2>&1 &
+    --save-dir checkpoints_v2 \
+    --log-file training_log_v2.csv >> "$TRAINER_LOG" 2>&1 &
 
 PID=$!
 echo "$PID" > "$PID_FILE"

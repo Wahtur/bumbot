@@ -18,14 +18,24 @@ else
     echo "Status: STOPPED (not running)"
 fi
 
-echo ""
-echo "--- Latest Checkpoints in checkpoints/ ---"
-ls -lht checkpoints/*.pt 2>/dev/null | head -n 5 || echo "No checkpoints found yet."
+CKPT_DIR="checkpoints_v2"
+if [ ! -d "$CKPT_DIR" ]; then
+    CKPT_DIR="checkpoints"
+fi
+
+LOG_FILE="training_log_v2.csv"
+if [ ! -f "$LOG_FILE" ]; then
+    LOG_FILE="training_log.csv"
+fi
 
 echo ""
-echo "--- Recent Games from training_log.csv ---"
-if [ -f "training_log.csv" ]; then
-    tail -n 6 training_log.csv
+echo "--- Latest Checkpoints in $CKPT_DIR/ ---"
+ls -lht "$CKPT_DIR"/*.pt 2>/dev/null | head -n 5 || echo "No checkpoints found yet."
+
+echo ""
+echo "--- Recent Games from $LOG_FILE ---"
+if [ -f "$LOG_FILE" ]; then
+    tail -n 6 "$LOG_FILE"
 else
     echo "No training log found yet."
 fi

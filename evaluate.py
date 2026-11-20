@@ -105,7 +105,7 @@ def load_player_from_checkpoint(ckpt_path: str, depth: int = 2, name: Optional[s
 def play_match(
     white_player: BasePlayer,
     black_player: BasePlayer,
-    max_plies: int = 150,
+    max_plies: int = 200,
 ) -> Tuple[float, str, int]:
     """
     Plays a single game between White and Black.
